@@ -95,7 +95,10 @@ void HeapProfiler::free(void *ptr, const StackTrace &trace){
 	auto it = ptrs.find(ptr);
 	if(it != ptrs.end()){
 		const PointerInfo &info = it->second;
-		stackTraces[info.stack].totalSize -= info.size;
+		StackTraceCollection_t::iterator iter = stackTraces.find(info.stack);
+		iter->second.totalSize -= info.size;
+		if (iter->second.totalSize == 0)
+			stackTraces.erase(iter);
 		ptrs.erase(it);
 	}else{
 		// Do anything with wild pointer frees?
