@@ -5,6 +5,8 @@
 #include <set>
 #include <Windows.h>
 
+extern HANDLE hCurrentProcess;
+
 const int backtraceSize = 62;
 typedef size_t StackHash;
 

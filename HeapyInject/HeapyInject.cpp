@@ -116,6 +116,7 @@ PtrAlignedOffsetRecallocDbg originalAlignedOffsetRecallocDbgs[numHooks];
 PtrAlignedReallocDbg originalAlignedReallocDbgs[numHooks];
 PtrAlignedRecallocDbg originalAlignedRecallocDbgs[numHooks];
 
+HANDLE hCurrentProcess;
 HeapProfiler *heapProfiler;
 
 // Mechanism to stop us profiling ourself.
@@ -1073,7 +1074,7 @@ BOOL CALLBACK enumSymbolsCallback(PSYMBOL_INFO symbolInfo, ULONG symbolSize, PVO
 
 // Callback which recieves loaded module names which we search for malloc/frees to hook.
 BOOL CALLBACK enumModulesCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID UserContext){
-	HANDLE currentProcess = GetCurrentProcess();
+	HANDLE currentProcess = hCurrentProcess;
 	const char* symList[] = { "malloc", "free", "realloc", "calloc", "_recalloc",
 							  "_malloc_dbg", "_free_dbg", "_realloc_dbg", "_calloc_dbg", "_recalloc_dbg",
 							  "_aligned_malloc", "_aligned_free", "_aligned_realloc", "_aligned_recalloc",
@@ -1230,8 +1231,14 @@ void setupHeapProfiling(){
 	dwSymOptions |= SYMOPT_AUTO_PUBLICS;
 	SymSetOptions(dwSymOptions);
 
+	HANDLE hProcess = GetCurrentProcess();
+	if (!DuplicateHandle(hProcess, hProcess, hProcess, &hCurrentProcess, 0, FALSE, DUPLICATE_SAME_ACCESS)){
+		InjectLog("DuplicateHandle failed\n");
+		return;
+	}
+
 	// Init dbghelp framework.
-	if(!SymInitialize(GetCurrentProcess(), NULL, true))
+	if(!SymInitialize(hCurrentProcess, NULL, true))
 		InjectLog("SymInitialize failed\n");
 
 	// Yes this leaks - cleauing it up at application exit has zero real benefit.
@@ -1240,7 +1247,7 @@ void setupHeapProfiling(){
 	heapProfiler = new(p) HeapProfiler();
 
 	// Trawl though loaded modules and hook any mallocs, frees, reallocs and callocs we find.
-	SymEnumerateModules(GetCurrentProcess(), enumModulesCallback, NULL);
+	SymEnumerateModules(hCurrentProcess, enumModulesCallback, NULL);
 
 	// Spawn and a new thread which prints allocation report every 10 seconds.
 	//

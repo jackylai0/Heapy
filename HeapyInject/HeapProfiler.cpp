@@ -22,7 +22,7 @@ void StackTrace::trace(){
 }
 #pragma optimize("", on)
 void StackTrace::print(std::ostream &stream) const {
-	HANDLE process = GetCurrentProcess();
+	HANDLE process = hCurrentProcess;
 
 	const int MAXSYMBOLNAME = 128 - sizeof(IMAGEHLP_SYMBOL);
 	char symbol64_buf[sizeof(IMAGEHLP_SYMBOL) + MAXSYMBOLNAME] = {0};
