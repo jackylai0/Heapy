@@ -10,6 +10,7 @@
 #include "MinHook.h"
 #include "dbghelp.h"
 #include <tlhelp32.h>
+#include <winternl.h>
 
 typedef __int64 int64_t;
 typedef void * (__cdecl *PtrMalloc)(size_t);
@@ -115,6 +116,11 @@ PtrAlignedOffsetReallocDbg originalAlignedOffsetReallocDbgs[numHooks];
 PtrAlignedOffsetRecallocDbg originalAlignedOffsetRecallocDbgs[numHooks];
 PtrAlignedReallocDbg originalAlignedReallocDbgs[numHooks];
 PtrAlignedRecallocDbg originalAlignedRecallocDbgs[numHooks];
+
+// Hook for LdrLoadDll
+typedef NTSTATUS (__stdcall *LdrLoadDll_t)(PWSTR, PULONG, PUNICODE_STRING, PHANDLE*);
+static LdrLoadDll_t ldrLoadDllHook;
+static LdrLoadDll_t orgLdrLoadDll;
 
 HANDLE hCurrentProcess;
 HeapProfiler *heapProfiler;
@@ -1089,6 +1095,59 @@ BOOL CALLBACK enumModulesCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID U
 	return true;
 }
 
+static NTSTATUS __stdcall _LdrLoadDll(PWSTR SearchPath OPTIONAL, PULONG DllCharacteristics OPTIONAL, PUNICODE_STRING DllName, PHANDLE *BaseAddress)
+{
+	NTSTATUS status = orgLdrLoadDll(SearchPath, DllCharacteristics, DllName, BaseAddress);
+	if (NT_SUCCESS(status)){
+		DWORD dwLastError = GetLastError();
+		{
+		PreventSelfProfile preventSelfProfile;
+
+		DWORD_PTR DllBaseAddress = (DWORD_PTR)*(HMODULE*)BaseAddress;
+		char* ModuleName = (char*)HeapAlloc(GetProcessHeap(), 0, DllName->Length / 2 + 1);
+		if (ModuleName != NULL)
+		{
+			// TODO: Change this to RtlUnicodeStringToAnsiString
+			for (int i=0; i<DllName->Length / 2; ++i)
+				ModuleName[i] = DllName->Buffer[i];
+			ModuleName[DllName->Length] = '\0';
+
+			SymLoadModuleEx(hCurrentProcess, NULL, ModuleName, NULL, DllBaseAddress, 0, NULL, 0);
+			enumModulesCallback(ModuleName, DllBaseAddress, NULL);
+			HeapFree(GetProcessHeap(), 0, ModuleName);
+		}
+		}
+		SetLastError(dwLastError);
+	}
+	return status;
+}
+
+BOOL CALLBACK enumNtdllSymbolsCallback(PSYMBOL_INFO symbolInfo, ULONG symbolSize, PVOID userContext){
+	PCSTR moduleName = (PCSTR)userContext;
+
+	// Hook LdrLoadDll.
+	if(strcmp(symbolInfo->Name, "LdrLoadDll") == 0){
+		InjectLog("Hooking LdrLoadDll from module ", moduleName, ".\r\n");
+		if(MH_CreateHook((void*)symbolInfo->Address, _LdrLoadDll,  (void **)&orgLdrLoadDll) != MH_OK){
+			InjectLog("Create hook LdrLoadDll failed!\r\n");
+		}
+
+		if(MH_EnableHook((void*)symbolInfo->Address) != MH_OK){
+			InjectLog("Enable LdrLoadDll hook failed!\r\n");
+		}
+	}
+	return true;
+}
+
+BOOL CALLBACK enumNtdllCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID UserContext){
+	if (strcmp(ModuleName, "ntdll") == 0)
+	{
+		SymEnumSymbols(hCurrentProcess, BaseOfDll, "LdrLoadDll", enumNtdllSymbolsCallback, (void*)ModuleName);
+	}
+
+	return false;
+}
+
 void printTopAllocationReport(int numToPrint, bool profileNumberOfAllocations){
 	std::vector<HeapProfiler::CallStackInfo> allocsSortedBySize;
 	heapProfiler->getAllocationSiteReport(allocsSortedBySize);
@@ -1248,6 +1307,9 @@ void setupHeapProfiling(){
 
 	// Trawl though loaded modules and hook any mallocs, frees, reallocs and callocs we find.
 	SymEnumerateModules(hCurrentProcess, enumModulesCallback, NULL);
+
+	// Catch any dlls that are dynamically loaded later
+	SymEnumerateModules(hCurrentProcess, enumNtdllCallback, NULL);
 
 	// Spawn and a new thread which prints allocation report every 10 seconds.
 	//
