@@ -122,6 +122,7 @@ typedef NTSTATUS (__stdcall *LdrLoadDll_t)(PWSTR, PULONG, PUNICODE_STRING, PHAND
 static LdrLoadDll_t ldrLoadDllHook;
 static LdrLoadDll_t orgLdrLoadDll;
 
+HMODULE hDllModule;
 HANDLE hCurrentProcess;
 HeapProfiler *heapProfiler;
 
@@ -1096,6 +1097,9 @@ BOOL CALLBACK enumSymbolsCallback(PSYMBOL_INFO symbolInfo, ULONG symbolSize, PVO
 
 // Callback which recieves loaded module names which we search for malloc/frees to hook.
 BOOL CALLBACK enumModulesCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID UserContext){
+	if (BaseOfDll == (DWORD_PTR)hDllModule)
+		return true;
+
 	HANDLE currentProcess = hCurrentProcess;
 	const char* symList[] = { "malloc", "free", "realloc", "calloc", "_recalloc",
 							  "_malloc_dbg", "_free_dbg", "_realloc_dbg", "_calloc_dbg", "_recalloc_dbg",
@@ -1345,9 +1349,10 @@ void setupHeapProfiling(){
 
 extern "C"{
 
-BOOL APIENTRY DllMain(HANDLE hModule, DWORD reasonForCall, LPVOID lpReserved){
+BOOL APIENTRY DllMain(HINSTANCE hModule, DWORD reasonForCall, LPVOID lpReserved){
 	switch (reasonForCall){
 		case DLL_PROCESS_ATTACH:
+			hDllModule = (HMODULE)hModule;
 			setupHeapProfiling();
 		break;
 		case DLL_THREAD_ATTACH:
