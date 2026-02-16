@@ -66,32 +66,25 @@ HeapProfiler::~HeapProfiler(){
 }
 
 void HeapProfiler::malloc(void *ptr, size_t size, const StackTrace &trace){
+	PointerInfo ptrInfoToInsert = { trace.hash, size };
+	CallStackInfo callStackInfoToInsert = { trace, size, 1 };
 	lock_guard lk(mutex);
 
-	if (ptrs.find(ptr) != ptrs.end())
-	{
+	std::pair<PtrCollection_t::iterator, bool> insertRet = ptrs.insert(std::make_pair(ptr, ptrInfoToInsert));
+	if (!insertRet.second){
 		//two buffers at same address!
 		//heap overflow?
 		return;
 	}
 
 	// Locate or create this stacktrace in the allocations map.
-	if(stackTraces.find(trace.hash) == stackTraces.end()){
-		CallStackInfo &stack = stackTraces[trace.hash];
-		stack.trace = trace;
-		stack.totalSize = 0;
-		stack.n = 0;
+	std::pair<StackTraceCollection_t::iterator, bool> insertSTRet = stackTraces.insert(std::make_pair(trace.hash, callStackInfoToInsert));
+	if(!insertSTRet.second){
+		// Store the size for this allocation this stacktraces allocation map.
+		CallStackInfo &callStackInfo = insertSTRet.first->second;
+		callStackInfo.totalSize += size;
+		callStackInfo.n++;
 	}
-
-	// Store the size for this allocation this stacktraces allocation map.
-	CallStackInfo& callStackInfo = stackTraces[trace.hash];
-	callStackInfo.totalSize += size;
-	callStackInfo.n++;
-
-	// Store the stracktrace hash of this allocation in the pointers map.
-	PointerInfo &ptrInfo = ptrs[ptr];
-	ptrInfo.size = size;
-	ptrInfo.stack = trace.hash;
 }
 
 void HeapProfiler::free(void *ptr, const StackTrace &trace){
