@@ -1033,18 +1033,34 @@ BOOL CALLBACK enumSymbolsCallback(PSYMBOL_INFO symbolInfo, ULONG symbolSize, PVO
 #define GEN_HOOK(func, nUsedHooks, HookTable, OrgHookTable)\
 	do {\
 		if(strcmp(symbolInfo->Name, #func) == 0){\
+			unsigned char dwInstructionBytes[2] = { 0 };\
+			memcpy(&dwInstructionBytes, (void*)symbolInfo->Address, sizeof(dwInstructionBytes));\
+			if(dwInstructionBytes[0] == 0xFF && dwInstructionBytes[1] == 0x25)\
+			{\
+				InjectLog("Not hooking " #func " from module ", moduleName, "\r\n");\
+				break;\
+			}\
 			if(nUsedHooks >= numHooks){\
 				InjectLog("All " #func " hooks used up!\r\n");\
 				break;\
 			}\
-			internal_itoa(nUsedHooks, logBuffer, 10);\
-			InjectLog("Hooking " #func " from module ", moduleName, " into " #func " hook num ", logBuffer, ".\r\n");\
-			if(MH_CreateHook((void*)symbolInfo->Address, HookTable[nUsedHooks],  (void **)&OrgHookTable[nUsedHooks]) != MH_OK){\
-				InjectLog("Create hook " #func " failed!\r\n");\
+			MH_STATUS ret = MH_CreateHook((void*)symbolInfo->Address, HookTable[nUsedHooks],  (void **)&OrgHookTable[nUsedHooks]);\
+			if(ret == MH_ERROR_ALREADY_CREATED){\
+				InjectLog("Already hooked " #func " from module ", moduleName, "\r\n");\
+				break;\
+			}\
+			else if(ret == MH_OK){\
+				internal_itoa(nUsedHooks, logBuffer, 10);\
+				InjectLog("Hooking " #func " from module ", moduleName, " into " #func " hook num ", logBuffer, ".\r\n");\
+			}else {\
+				internal_itoa(ret, logBuffer, 10);\
+				InjectLog("Create hook " #func " failed! error=", logBuffer, "\r\n");\
 			}\
 		\
-			if(MH_EnableHook((void*)symbolInfo->Address) != MH_OK){\
-				InjectLog("Enable " #func " hook failed!\r\n");\
+			ret = MH_EnableHook((void*)symbolInfo->Address);\
+			if(ret != MH_OK){\
+				internal_itoa(ret, logBuffer, 10);\
+				InjectLog("Enable " #func " hook failed! error=", logBuffer, "\r\n");\
 			}\
 		\
 			nUsedHooks++;\
