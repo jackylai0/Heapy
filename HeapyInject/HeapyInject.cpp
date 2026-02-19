@@ -1130,7 +1130,7 @@ static NTSTATUS __stdcall _LdrLoadDll(PWSTR SearchPath OPTIONAL, PULONG DllChara
 			// TODO: Change this to RtlUnicodeStringToAnsiString
 			for (int i=0; i<DllName->Length / 2; ++i)
 				ModuleName[i] = DllName->Buffer[i];
-			ModuleName[DllName->Length] = '\0';
+			ModuleName[DllName->Length / 2] = '\0';
 
 			SymLoadModuleEx(hCurrentProcess, NULL, ModuleName, NULL, DllBaseAddress, 0, NULL, 0);
 			enumModulesCallback(ModuleName, DllBaseAddress, NULL);
@@ -1163,9 +1163,10 @@ BOOL CALLBACK enumNtdllCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID Use
 	if (strcmp(ModuleName, "ntdll") == 0)
 	{
 		SymEnumSymbols(hCurrentProcess, BaseOfDll, "LdrLoadDll", enumNtdllSymbolsCallback, (void*)ModuleName);
+		return false;
 	}
 
-	return false;
+	return true;
 }
 
 void printTopAllocationReport(int numToPrint, bool profileNumberOfAllocations){
