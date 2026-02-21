@@ -119,7 +119,11 @@ PtrAlignedRecallocDbg originalAlignedRecallocDbgs[numHooks];
 
 // Hook for LdrLoadDll
 typedef NTSTATUS (__stdcall *LdrLoadDll_t)(PWSTR, PULONG, PUNICODE_STRING, PHANDLE);
+typedef NTSTATUS (NTAPI *RtlUnicodeStringToAnsiString_t)(PANSI_STRING, PCUNICODE_STRING, BOOLEAN);
+typedef VOID (NTAPI *RtlFreeAnsiString_t)(PANSI_STRING AnsiString);
 static LdrLoadDll_t orgLdrLoadDll;
+static RtlUnicodeStringToAnsiString_t RtlUnicodeStringToAnsiString_dll;
+static RtlFreeAnsiString_t RtlFreeAnsiString_dll;
 
 HMODULE hDllModule;
 HANDLE hCurrentProcess;
@@ -1123,14 +1127,33 @@ static NTSTATUS __stdcall _LdrLoadDll(PWSTR SearchPath OPTIONAL, PULONG DllChara
 		PreventSelfProfile preventSelfProfile;
 
 		DWORD_PTR DllBaseAddress = (DWORD_PTR)*(HMODULE*)BaseAddress;
-		char* ModuleName = (char*)HeapAlloc(GetProcessHeap(), 0, DllName->Length / 2 + 1);
-		if (ModuleName != NULL)
-		{
-			// TODO: Change this to RtlUnicodeStringToAnsiString
-			for (int i=0; i<DllName->Length / 2; ++i)
-				ModuleName[i] = DllName->Buffer[i];
-			ModuleName[DllName->Length / 2] = '\0';
-
+		if(RtlFreeAnsiString_dll == NULL){
+			RtlFreeAnsiString_dll = (RtlFreeAnsiString_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlFreeAnsiString");
+		}
+		if(RtlFreeAnsiString_dll != NULL && RtlUnicodeStringToAnsiString_dll == NULL){
+			RtlUnicodeStringToAnsiString_dll = (RtlUnicodeStringToAnsiString_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlUnicodeStringToAnsiString");
+		}
+		char* ModuleName = NULL;
+		ANSI_STRING ansiDllName;
+		if(RtlUnicodeStringToAnsiString_dll != NULL){
+			status = RtlUnicodeStringToAnsiString_dll(&ansiDllName, DllName, TRUE);
+		}
+		if (RtlUnicodeStringToAnsiString_dll != NULL && NT_SUCCESS(status)){
+			ModuleName = (char*)HeapAlloc(GetProcessHeap(), 0, ansiDllName.Length + 1);
+			if(ModuleName != NULL){
+				memcpy(ModuleName, ansiDllName.Buffer, ansiDllName.Length);
+				ModuleName[ansiDllName.Length] = '\0';
+			}
+			RtlFreeAnsiString_dll(&ansiDllName);
+		}else {
+			ModuleName = (char*)HeapAlloc(GetProcessHeap(), 0, DllName->Length / 2 + 1);
+			if(ModuleName != NULL){
+				for(int i=0; i<DllName->Length / 2; ++i)
+					ModuleName[i] = DllName->Buffer[i];
+				ModuleName[DllName->Length / 2] = '\0';
+			}
+		}
+		if(ModuleName != NULL){
 			SymLoadModuleEx(hCurrentProcess, NULL, ModuleName, NULL, DllBaseAddress, 0, NULL, 0);
 			enumModulesCallback(ModuleName, DllBaseAddress, NULL);
 			HeapFree(GetProcessHeap(), 0, ModuleName);
