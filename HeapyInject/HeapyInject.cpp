@@ -118,8 +118,7 @@ PtrAlignedReallocDbg originalAlignedReallocDbgs[numHooks];
 PtrAlignedRecallocDbg originalAlignedRecallocDbgs[numHooks];
 
 // Hook for LdrLoadDll
-typedef NTSTATUS (__stdcall *LdrLoadDll_t)(PWSTR, PULONG, PUNICODE_STRING, PHANDLE*);
-static LdrLoadDll_t ldrLoadDllHook;
+typedef NTSTATUS (__stdcall *LdrLoadDll_t)(PWSTR, PULONG, PUNICODE_STRING, PHANDLE);
 static LdrLoadDll_t orgLdrLoadDll;
 
 HMODULE hDllModule;
@@ -1115,7 +1114,7 @@ BOOL CALLBACK enumModulesCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID U
 	return true;
 }
 
-static NTSTATUS __stdcall _LdrLoadDll(PWSTR SearchPath OPTIONAL, PULONG DllCharacteristics OPTIONAL, PUNICODE_STRING DllName, PHANDLE *BaseAddress)
+static NTSTATUS __stdcall _LdrLoadDll(PWSTR SearchPath OPTIONAL, PULONG DllCharacteristics OPTIONAL, PUNICODE_STRING DllName, PHANDLE BaseAddress)
 {
 	NTSTATUS status = orgLdrLoadDll(SearchPath, DllCharacteristics, DllName, BaseAddress);
 	if (NT_SUCCESS(status)){
