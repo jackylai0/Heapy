@@ -117,13 +117,10 @@ PtrAlignedOffsetRecallocDbg originalAlignedOffsetRecallocDbgs[numHooks];
 PtrAlignedReallocDbg originalAlignedReallocDbgs[numHooks];
 PtrAlignedRecallocDbg originalAlignedRecallocDbgs[numHooks];
 
-// Hook for LdrLoadDll
-typedef NTSTATUS (__stdcall *LdrLoadDll_t)(PWSTR, PULONG, PUNICODE_STRING, PHANDLE);
-typedef NTSTATUS (NTAPI *RtlUnicodeStringToAnsiString_t)(PANSI_STRING, PCUNICODE_STRING, BOOLEAN);
-typedef VOID (NTAPI *RtlFreeAnsiString_t)(PANSI_STRING AnsiString);
-static LdrLoadDll_t orgLdrLoadDll;
-static RtlUnicodeStringToAnsiString_t RtlUnicodeStringToAnsiString_dll;
-static RtlFreeAnsiString_t RtlFreeAnsiString_dll;
+// Hook for LdrpCallInitRoutine
+typedef BOOLEAN (NTAPI *PDLL_INIT_ROUTINE)(PVOID, ULONG, PCONTEXT);
+typedef BOOLEAN (NTAPI *LdrpCallInitRoutine_t)(PDLL_INIT_ROUTINE, PVOID, ULONG, PVOID);
+static LdrpCallInitRoutine_t orgLdrpCallInitRoutine;
 
 HMODULE hDllModule;
 HANDLE hCurrentProcess;
@@ -1118,64 +1115,49 @@ BOOL CALLBACK enumModulesCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID U
 	return true;
 }
 
-static NTSTATUS __stdcall _LdrLoadDll(PWSTR SearchPath OPTIONAL, PULONG DllCharacteristics OPTIONAL, PUNICODE_STRING DllName, PHANDLE BaseAddress)
+BOOLEAN NTAPI _LdrpCallInitRoutine(PDLL_INIT_ROUTINE entryPoint, PVOID baseAddress, ULONG reason, PVOID context)
 {
-	NTSTATUS status = orgLdrLoadDll(SearchPath, DllCharacteristics, DllName, BaseAddress);
-	if (NT_SUCCESS(status)){
+	if(reason == DLL_PROCESS_ATTACH){
 		DWORD dwLastError = GetLastError();
-		{
 		PreventSelfProfile preventSelfProfile;
 
-		DWORD_PTR DllBaseAddress = (DWORD_PTR)*(HMODULE*)BaseAddress;
-		if(RtlFreeAnsiString_dll == NULL){
-			RtlFreeAnsiString_dll = (RtlFreeAnsiString_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlFreeAnsiString");
-		}
-		if(RtlFreeAnsiString_dll != NULL && RtlUnicodeStringToAnsiString_dll == NULL){
-			RtlUnicodeStringToAnsiString_dll = (RtlUnicodeStringToAnsiString_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlUnicodeStringToAnsiString");
-		}
-		char* ModuleName = NULL;
-		ANSI_STRING ansiDllName;
-		if(RtlUnicodeStringToAnsiString_dll != NULL){
-			status = RtlUnicodeStringToAnsiString_dll(&ansiDllName, DllName, TRUE);
-		}
-		if (RtlUnicodeStringToAnsiString_dll != NULL && NT_SUCCESS(status)){
-			ModuleName = (char*)HeapAlloc(GetProcessHeap(), 0, ansiDllName.Length + 1);
-			if(ModuleName != NULL){
-				memcpy(ModuleName, ansiDllName.Buffer, ansiDllName.Length);
-				ModuleName[ansiDllName.Length] = '\0';
+		DWORD_PTR dllBaseAddress = (DWORD_PTR)baseAddress;
+		DWORD dwModuleNameLen = 0;
+		DWORD dwLen = 0;
+		char* moduleName = NULL;
+		do{
+			dwModuleNameLen += MAX_PATH;
+			HeapFree(GetProcessHeap(), 0, moduleName);
+			moduleName = (char*)HeapAlloc(GetProcessHeap(), 0, dwModuleNameLen);
+			if (moduleName == NULL)
+				break;
+			dwLen = GetModuleFileNameA((HMODULE)baseAddress, moduleName, dwModuleNameLen);
+		} while (dwLen >= dwModuleNameLen);
+
+		if(moduleName != NULL){
+			if(SymLoadModuleEx(hCurrentProcess, NULL, moduleName, NULL, dllBaseAddress, 0, NULL, 0) != 0){
+				enumModulesCallback(moduleName, dllBaseAddress, NULL);
 			}
-			RtlFreeAnsiString_dll(&ansiDllName);
-		}else {
-			ModuleName = (char*)HeapAlloc(GetProcessHeap(), 0, DllName->Length / 2 + 1);
-			if(ModuleName != NULL){
-				for(int i=0; i<DllName->Length / 2; ++i)
-					ModuleName[i] = DllName->Buffer[i];
-				ModuleName[DllName->Length / 2] = '\0';
-			}
-		}
-		if(ModuleName != NULL){
-			SymLoadModuleEx(hCurrentProcess, NULL, ModuleName, NULL, DllBaseAddress, 0, NULL, 0);
-			enumModulesCallback(ModuleName, DllBaseAddress, NULL);
-			HeapFree(GetProcessHeap(), 0, ModuleName);
-		}
+			HeapFree(GetProcessHeap(), 0, moduleName);
 		}
 		SetLastError(dwLastError);
 	}
-	return status;
+	BOOLEAN ret = orgLdrpCallInitRoutine(entryPoint, baseAddress, reason, context);
+	return ret;
 }
 
 BOOL CALLBACK enumNtdllSymbolsCallback(PSYMBOL_INFO symbolInfo, ULONG symbolSize, PVOID userContext){
 	PCSTR moduleName = (PCSTR)userContext;
 
 	// Hook LdrLoadDll.
-	if(strcmp(symbolInfo->Name, "LdrLoadDll") == 0){
-		InjectLog("Hooking LdrLoadDll from module ", moduleName, ".\r\n");
-		if(MH_CreateHook((void*)symbolInfo->Address, _LdrLoadDll,  (void **)&orgLdrLoadDll) != MH_OK){
-			InjectLog("Create hook LdrLoadDll failed!\r\n");
+	if(strcmp(symbolInfo->Name, "LdrpCallInitRoutine") == 0){
+		InjectLog("Hooking LdrpCallInitRoutine from module ", moduleName, ".\r\n");
+		if(MH_CreateHook((void*)symbolInfo->Address, _LdrpCallInitRoutine,  (void **)&orgLdrpCallInitRoutine) != MH_OK){
+			InjectLog("Create hook LdrpCallInitRoutine failed!\r\n");
 		}
 
 		if(MH_EnableHook((void*)symbolInfo->Address) != MH_OK){
-			InjectLog("Enable LdrLoadDll hook failed!\r\n");
+			InjectLog("Enable LdrpCallInitRoutine hook failed!\r\n");
 		}
 	}
 	return true;
@@ -1184,7 +1166,7 @@ BOOL CALLBACK enumNtdllSymbolsCallback(PSYMBOL_INFO symbolInfo, ULONG symbolSize
 BOOL CALLBACK enumNtdllCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID UserContext){
 	if (strcmp(ModuleName, "ntdll") == 0)
 	{
-		SymEnumSymbols(hCurrentProcess, BaseOfDll, "LdrLoadDll", enumNtdllSymbolsCallback, (void*)ModuleName);
+		SymEnumSymbols(hCurrentProcess, BaseOfDll, "LdrpCallInitRoutine", enumNtdllSymbolsCallback, (void*)ModuleName);
 		return false;
 	}
 
