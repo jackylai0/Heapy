@@ -31,6 +31,8 @@ struct Mutex{
 	}
 };
 
+extern Mutex dbgHelpMutex;
+
 struct lock_guard{
 	Mutex& mutex;
 	lock_guard(Mutex& mutex) : mutex(mutex){

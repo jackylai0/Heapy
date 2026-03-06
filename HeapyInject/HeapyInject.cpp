@@ -126,6 +126,7 @@ static LdrpCallInitRoutine_t orgLdrpCallInitRoutine;
 
 HMODULE hDllModule;
 HANDLE hCurrentProcess;
+Mutex dbgHelpMutex;
 HeapProfiler *heapProfiler;
 std::unordered_set<std::string, std::hash<std::string>, std::equal_to<std::string>, HeapAllocator<std::string> > hookedDllSet;
 Mutex hookedDllSetMutex;
@@ -1147,6 +1148,7 @@ BOOLEAN NTAPI _LdrpCallInitRoutine(PDLL_INIT_ROUTINE entryPoint, PVOID baseAddre
 		} while (dwLen >= dwModuleNameLen);
 
 		if(moduleName != NULL){
+			lock_guard lk(dbgHelpMutex);
 			if(SymLoadModuleEx(hCurrentProcess, NULL, moduleName, NULL, dllBaseAddress, 0, NULL, 0) != 0){
 				enumModulesCallback(moduleName, dllBaseAddress, NULL);
 			}

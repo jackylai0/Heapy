@@ -30,6 +30,7 @@ void StackTrace::print(std::ostream &stream) const {
 	symbol->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL);
 	symbol->MaxNameLength = MAXSYMBOLNAME - 1;
 
+	lock_guard lk(dbgHelpMutex);
 	// Print out stack trace. Skip first frame (that's our trace function) and second frmae (that's our hook function)
 	for(size_t i = 2; i < backtraceSize; ++i){ 
 		if(backtrace[i]){
