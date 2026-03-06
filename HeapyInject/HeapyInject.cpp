@@ -4,6 +4,8 @@
 #include <fstream>
 #include <iomanip>
 #include <algorithm>
+#include <string>
+#include <unordered_set>
 
 #include "HeapProfiler.h"
 
@@ -125,6 +127,8 @@ static LdrpCallInitRoutine_t orgLdrpCallInitRoutine;
 HMODULE hDllModule;
 HANDLE hCurrentProcess;
 HeapProfiler *heapProfiler;
+std::unordered_set<std::string, std::hash<std::string>, std::equal_to<std::string>, HeapAllocator<std::string> > hookedDllSet;
+Mutex hookedDllSetMutex;
 
 // Mechanism to stop us profiling ourself.
 DWORD tlsIndex;
@@ -1100,8 +1104,13 @@ BOOL CALLBACK enumModulesCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID U
 	if (BaseOfDll == (DWORD_PTR)hDllModule)
 		return true;
 
+	{
+	lock_guard lk(hookedDllSetMutex);
+	if (hookedDllSet.find(ModuleName) != hookedDllSet.end())
+		return true;
+	}
 	HANDLE currentProcess = hCurrentProcess;
-	const char* symList[] = { "malloc", "free", "realloc", "calloc", "_recalloc",
+	static const char* symList[] = { "malloc", "free", "realloc", "calloc", "_recalloc",
 							  "_malloc_dbg", "_free_dbg", "_realloc_dbg", "_calloc_dbg", "_recalloc_dbg",
 							  "_aligned_malloc", "_aligned_free", "_aligned_realloc", "_aligned_recalloc",
 							  "_aligned_malloc_dbg", "_aligned_free_dbg", "_aligned_realloc_dbg", "_aligned_recalloc_dbg",
@@ -1112,6 +1121,9 @@ BOOL CALLBACK enumModulesCallback(PCSTR ModuleName, DWORD_PTR BaseOfDll, PVOID U
 	{
 		SymEnumSymbols(currentProcess, BaseOfDll, symList[i], enumSymbolsCallback, (void*)ModuleName);
 	}
+
+	lock_guard lk(hookedDllSetMutex);
+	hookedDllSet.insert(ModuleName);
 	return true;
 }
 
